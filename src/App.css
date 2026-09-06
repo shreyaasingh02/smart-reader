@@ -1,0 +1,46 @@
+.inputBox {
+    display: block;
+    margin: 20px;
+    padding: 10px;
+    width: 300px;
+    border-radius: 8px;
+    border: 1px solid #D9B26F;
+    background-color: #202020;
+    color: white;
+    outline: none;
+    transition: all 0.3s ease;
+}
+
+.loginBtn {
+    margin: 20px;
+    padding: 10px;
+    width: 150px;
+    border: none;
+    border-radius: 8px;
+    background-color: #D9B26F;
+    color: white;
+    font-size: 20px;
+    cursor: pointer;
+    transition: all 0.3s ease;
+}
+.loginBtn:hover {
+  transform: translateY(-2px);
+  background-color: green;
+}
+
+.registerBtn {
+    margin: 20px;
+    padding: 10px;
+    width: 100px;
+    border: none;
+    border-radius: 8px;
+    background-color: #D9B26F;
+    color: white;
+    font-size: 20px;
+    cursor: pointer;
+    transition: all 0.3s ease;
+}
+.registerBtn:hover {
+  transform: translateY(-2px);
+  background-color: blue;
+}
