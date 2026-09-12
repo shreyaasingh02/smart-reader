@@ -127,18 +127,62 @@ router.get("/", authMiddleware, async (req, res) => {
 });
 
 router.delete("/:id", authMiddleware, async (req, res) => {
+  console.log("🔥 NEW DELETE ROUTE HIT");
+
   try {
-    const book = await Book.findByIdAndDelete({ _id: req.params.id, userId: req.userId });
+    const book = await Book.findOne({
+      _id: req.params.id,
+      userId: req.userId
+    });
 
     if (!book) {
-      return res.status(404).json({ message: "Book not found" });
+      return res.status(404).json({
+        message: "Book not found"
+      });
     }
-    res.json({ message: "Book deleted successfully" });
+
+    console.log("📄 PDF path:", book.pdfPath);
+    console.log("🖼️ Cover path:", book.coverPath);
+
+    const filesToDelete = [
+      book.pdfPath,
+      book.coverPath
+    ].filter(Boolean);
+
+    console.log("🗑️ Deleting:", filesToDelete);
+
+    const { data, error } = await supabase.storage
+      .from("books")
+      .remove(filesToDelete);
+
+    console.log("🗑️ Supabase result:", data);
+    console.log("❌ Supabase error:", error);
+
+    if (error) {
+      return res.status(500).json({
+        message: "Supabase deletion failed",
+        error: error.message
+      });
+    }
+
+    await Book.deleteOne({
+      _id: book._id,
+      userId: req.userId
+    });
+
+    res.json({
+      message: "Book, PDF and cover deleted successfully"
+    });
+
+  } catch (error) {
+    console.error("❌ Delete book error:", error);
+
+    res.status(500).json({
+      message: "Failed to delete book",
+      error: error.message
+    });
   }
-  catch (error) {
-    console.error(error);
-  }
-})
+});
 
 router.put("/:id/page", authMiddleware, async (req, res) => {
   try {
@@ -261,94 +305,272 @@ router.post("/meaning", authMiddleware, async (req, res) => {
 
     const originalWord = text.trim().toLowerCase();
 
-    // Try the original word first
-    const wordsToTry = [originalWord];
+    // For now, meaning lookup is for a single word
+    const word = originalWord.split(/\s+/)[0];
 
-    // Basic plural → singular fallbacks
-    if (originalWord.endsWith("ies")) {
-      wordsToTry.push(
-        originalWord.slice(0, -3) + "y"
-      );
+    console.log("🔎 Looking up meaning for:", word);
+
+    // --------------------------------------------------
+    // STEP 1: Get dictionary meanings from Datamuse
+    // --------------------------------------------------
+
+    const dictionaryUrl =
+      `https://api.datamuse.com/words?sp=${encodeURIComponent(word)}&md=dp&max=10`;
+
+    const dictionaryResponse = await fetch(dictionaryUrl);
+    const dictionaryText = await dictionaryResponse.text();
+
+    let dictionaryData;
+
+    try {
+      dictionaryData = JSON.parse(dictionaryText);
+    } catch (error) {
+      console.error("❌ Datamuse returned invalid JSON");
+
+      return res.status(502).json({
+        message: "Dictionary service failed"
+      });
     }
 
-    if (originalWord.endsWith("ves")) {
-      wordsToTry.push(
-        originalWord.slice(0, -3) + "f"
-      );
-
-      wordsToTry.push(
-        originalWord.slice(0, -3) + "fe"
-      );
-    }
-
-    if (originalWord.endsWith("es")) {
-      wordsToTry.push(
-        originalWord.slice(0, -2)
-      );
-    }
-
-    if (originalWord.endsWith("s")) {
-      wordsToTry.push(
-        originalWord.slice(0, -1)
-      );
-    }
-
-    let dictionaryData = null;
-    let searchedWord = originalWord;
-
-    for (const word of wordsToTry) {
-
-      console.log("Trying dictionary word:", word);
-
-      const response = await fetch(
-        `https://api.quickpronounce.site/v1/dictionary/${encodeURIComponent(word)}`
-      );
-
-      const data = await response.json();
-
-      if (response.ok && data.success) {
-        dictionaryData = data;
-        searchedWord = word;
-        break;
-      }
-    }
-
-    if (!dictionaryData) {
+    if (
+      !dictionaryResponse.ok ||
+      !Array.isArray(dictionaryData)
+    ) {
       return res.status(404).json({
         message: "Meaning not found"
       });
     }
 
-    const meanings = [];
+    // Extract definitions
+    const rawMeanings = [];
 
-    dictionaryData.data.entries.forEach((entry) => {
-      entry.definitions.forEach((definition) => {
+    dictionaryData.forEach((item) => {
+      if (!item.defs || !Array.isArray(item.defs)) {
+        return;
+      }
 
-        meanings.push({
-          partOfSpeech: entry.partOfSpeech,
-          definition: definition
-        });
+      item.defs.forEach((definition) => {
+        const parts = definition.split("\t");
 
+        const partOfSpeech = parts[0] || "";
+        const definitionText = parts
+          .slice(1)
+          .join("\t")
+          .trim();
+
+        if (definitionText) {
+          rawMeanings.push({
+            partOfSpeech,
+            definition: definitionText
+          });
+        }
       });
     });
 
-    if (meanings.length === 0) {
+    if (rawMeanings.length === 0) {
       return res.status(404).json({
         message: "Meaning not found"
       });
     }
 
-    res.json({
+    console.log(
+      "📚 Raw meanings found:",
+      rawMeanings.length
+    );
+
+    // --------------------------------------------------
+    // STEP 2: Simplify meanings using Gemini
+    // --------------------------------------------------
+
+    if (!process.env.GEMINI_API_KEY) {
+      console.error("❌ GEMINI_API_KEY is missing");
+
+      // If Gemini key is missing, return dictionary meanings
+      // instead of breaking the whole feature.
+      return res.json({
+        word: originalWord,
+        baseWord: word,
+        meanings: rawMeanings
+      });
+    }
+
+    const prompt = `
+You are helping a student understand words while reading a book.
+
+Word:
+"${word}"
+
+Here are dictionary meanings for the word:
+
+${JSON.stringify(rawMeanings)}
+
+Rewrite these meanings into VERY SIMPLE, NATURAL English that a student can understand easily.
+
+IMPORTANT RULES:
+
+1. Keep the meanings accurate.
+2. Do NOT invent new meanings.
+3. Give the different common meanings/usages of the word.
+4. Remove difficult dictionary language.
+5. Do not use words that are harder than the original word unless absolutely necessary.
+6. Each meaning should be short — preferably one simple sentence.
+7. If two definitions mean almost the same thing, combine them.
+8. Keep different contexts when they are genuinely different.
+9. Keep the correct part of speech.
+10. Do NOT include "countable", "uncountable", "transitive", "intransitive", etc.
+11. Do NOT include dictionary symbols or abbreviations.
+12. Return only the JSON requested by the schema.
+`;
+
+    const geminiResponse = await fetch(
+      "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent",
+      {
+        method: "POST",
+
+        headers: {
+          "Content-Type": "application/json",
+          "x-goog-api-key": process.env.GEMINI_API_KEY
+        },
+
+        body: JSON.stringify({
+          contents: [
+            {
+              parts: [
+                {
+                  text: prompt
+                }
+              ]
+            }
+          ],
+
+          generationConfig: {
+            response_mime_type: "application/json",
+
+            response_schema: {
+              type: "ARRAY",
+
+              items: {
+                type: "OBJECT",
+
+                properties: {
+                  partOfSpeech: {
+                    type: "STRING"
+                  },
+
+                  definition: {
+                    type: "STRING"
+                  }
+                },
+
+                required: [
+                  "partOfSpeech",
+                  "definition"
+                ]
+              }
+            }
+          }
+        })
+      }
+    );
+
+    const geminiText = await geminiResponse.text();
+
+    console.log(
+      "🤖 Gemini status:",
+      geminiResponse.status
+    );
+
+    if (!geminiResponse.ok) {
+      console.error(
+        "❌ Gemini error:",
+        geminiText
+      );
+
+      // Fallback to dictionary meanings
+      return res.json({
+        word: originalWord,
+        baseWord: word,
+        meanings: rawMeanings
+      });
+    }
+
+    let geminiData;
+
+    try {
+      geminiData = JSON.parse(geminiText);
+    } catch (error) {
+      console.error(
+        "❌ Gemini returned invalid JSON:",
+        geminiText
+      );
+
+      return res.json({
+        word: originalWord,
+        baseWord: word,
+        meanings: rawMeanings
+      });
+    }
+
+    const generatedText =
+      geminiData?.candidates?.[0]?.content?.parts?.[0]?.text;
+
+    if (!generatedText) {
+      console.error("❌ Gemini returned no text");
+
+      return res.json({
+        word: originalWord,
+        baseWord: word,
+        meanings: rawMeanings
+      });
+    }
+
+    let simpleMeanings;
+
+    try {
+      simpleMeanings = JSON.parse(generatedText);
+    } catch (error) {
+      console.error(
+        "❌ Could not parse Gemini meanings:",
+        generatedText
+      );
+
+      return res.json({
+        word: originalWord,
+        baseWord: word,
+        meanings: rawMeanings
+      });
+    }
+
+    if (
+      !Array.isArray(simpleMeanings) ||
+      simpleMeanings.length === 0
+    ) {
+      return res.json({
+        word: originalWord,
+        baseWord: word,
+        meanings: rawMeanings
+      });
+    }
+
+    console.log(
+      "✅ Simple meanings generated:",
+      simpleMeanings.length
+    );
+
+    // --------------------------------------------------
+    // STEP 3: Send to React
+    // --------------------------------------------------
+
+    return res.json({
       word: originalWord,
-      baseWord: searchedWord,
-      meanings: meanings
+      baseWord: word,
+      meanings: simpleMeanings
     });
 
   } catch (error) {
+    console.error("❌ Meaning error:", error);
 
-    console.error("Meaning error:", error);
-
-    res.status(500).json({
+    return res.status(500).json({
       message: "Failed to get meaning"
     });
   }

@@ -7,7 +7,7 @@ export const Login = () => {
     const navigate = useNavigate()
 
     const collectData = async() => {
-      let result = await fetch("http://localhost:5000/api/auth/login", {
+      let result = await fetch("/api/auth/login", {
         method: "POST",
         body: JSON.stringify({email, password}),
         headers: {'Content-Type' : 'application/json'}

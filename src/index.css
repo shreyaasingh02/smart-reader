@@ -34,3 +34,23 @@ input[type="number"]::-webkit-inner-spin-button {
     -webkit-appearance: none;
     margin: 0;
 }
+
+::highlight(book-highlight-yellow) {
+  background-color: #FFF176;
+  color: #000;
+}
+
+::highlight(book-highlight-green) {
+  background-color: #A5D6A7;
+  color: #000;
+}
+
+::highlight(book-highlight-blue) {
+  background-color: #90CAF9;
+  color: #000;
+}
+
+::highlight(book-highlight-pink) {
+  background-color: #F48FB1;
+  color: #000;
+}

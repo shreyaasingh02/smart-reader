@@ -16,7 +16,7 @@ export const Highlight = ({ highlights, bookId, onDeleteHighlight, onRemoveHighl
   const deleteHighlight = async(highlightId) => {
     const token = localStorage.getItem("token");
     try {
-      const response = await fetch(`http://localhost:5000/api/books/${bookId}/highlights/${highlightId}`, {
+      const response = await fetch(`/api/books/${bookId}/highlights/${highlightId}`, {
         method: "DELETE",
         headers: {Authorization: `Bearer ${token}`}
       })

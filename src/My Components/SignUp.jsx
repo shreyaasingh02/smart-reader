@@ -9,7 +9,7 @@ export const SignUp = () => {
 
     const collectData = async() => {
         console.log("Data collected")
-        let result = await fetch("http://localhost:5000/api/auth/signup", {
+        let result = await fetch("/api/auth/signup", {
             method: "POST",
             body: JSON.stringify({name, email, password}),
             headers : {

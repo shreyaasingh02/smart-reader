@@ -63,6 +63,10 @@ export const Book = () => {
   const [showColors, setShowColors] = useState(false);
   const [highlights, setHighlights] = useState([]);
   const [profileMenu, setProfileMenu] = useState(false);
+
+  const [showMobileLibrary, setShowMobileLibrary] = useState(false);
+  const [showMobileNotes, setShowMobileNotes] = useState(false);
+
   const navigate = useNavigate();
   const [showMeaning, setShowMeaning] = useState(false);
   const [meaningLoading, setMeaningLoading] = useState(false);
@@ -75,7 +79,7 @@ export const Book = () => {
   useEffect(() => {
     const fetchBooks = async () => {
       try {
-        const response = await fetch("http://localhost:5000/api/books", {
+        const response = await fetch("/api/books", {
           headers: {
             Authorization: `Bearer ${localStorage.getItem("token")}`,
           },
@@ -119,9 +123,31 @@ export const Book = () => {
     fetchBooks();
   }, []);
 
+  useEffect(() => {
+    if ("speechSynthesis" in window) {
+      window.speechSynthesis.getVoices();
+
+      const handleVoicesChanged = () => {
+        window.speechSynthesis.getVoices();
+      };
+
+      window.speechSynthesis.addEventListener(
+        "voiceschanged",
+        handleVoicesChanged
+      );
+
+      return () => {
+        window.speechSynthesis.removeEventListener(
+          "voiceschanged",
+          handleVoicesChanged
+        );
+      };
+    }
+  }, []);
+
   const pdfPageRef = useRef(null);
   const highlightsRef = useRef([]);
-  const restoredPageRef = useRef(null);
+  // const restoredPageRef = useRef(null);
 
   useEffect(() => {
     if (!selectedBook) return;
@@ -133,64 +159,177 @@ export const Book = () => {
 
     setHighlights(savedHighlights);
     setNotes(savedNotes);
-  }, [selectedBook]);
+  }, [selectedBook?._id]);
 
   const handleSelection = () => {
-    const selection = window.getSelection();
-    if (!selection || selection.isCollapsed) {
-      selectedTextRef.current = "";
-      selectedRangeRef.current = null;
-      highlightAnchorRef.current = null;
-      return;
-    }
+    // Give the browser a moment to finish the native text selection
+    // on mobile before reading window.getSelection().
+    setTimeout(() => {
+      const selection = window.getSelection();
 
-    const text = selection.toString().trim();
-    if (!text) {
-      selectedTextRef.current = "";
-      selectedRangeRef.current = null;
-      highlightAnchorRef.current = null;
-      return;
-    }
+      if (!selection || selection.isCollapsed) {
+        return;
+      }
 
-    const range = selection.getRangeAt(0);
-    const startElement = range.startContainer.parentElement;
-    const endElement = range.endContainer.parentElement;
+      const text = selection.toString().trim();
 
-    const textLayer = startElement.closest(".textLayer");
+      if (!text) {
+        return;
+      }
+
+      const range = selection.getRangeAt(0);
+
+      const startElement =
+        range.startContainer.nodeType === Node.TEXT_NODE
+          ? range.startContainer.parentElement
+          : range.startContainer;
+
+      const endElement =
+        range.endContainer.nodeType === Node.TEXT_NODE
+          ? range.endContainer.parentElement
+          : range.endContainer;
+
+      if (!startElement || !endElement) {
+        console.log("Selection elements not found");
+        return;
+      }
+
+      const textLayer = startElement.closest(".textLayer");
+
+      if (!textLayer) {
+        console.log("Text layer not found");
+        return;
+      }
+
+      // Get all text before the selection
+      const beforeRange = document.createRange();
+
+      beforeRange.setStart(textLayer, 0);
+      beforeRange.setEnd(
+        range.startContainer,
+        range.startOffset
+      );
+
+      // Get all text after the selection
+      const afterRange = document.createRange();
+
+      afterRange.setStart(
+        range.endContainer,
+        range.endOffset
+      );
+
+      afterRange.setEnd(
+        textLayer,
+        textLayer.childNodes.length
+      );
+
+      const beforeText = beforeRange.toString();
+      const afterText = afterRange.toString();
+
+      const beforeContext = beforeText.slice(-100);
+      const afterContext = afterText.slice(0, 100);
+
+      const anchor = {
+        pageNumber: pageNumber,
+        text: text,
+        beforeContext: beforeContext,
+        afterContext: afterContext,
+      };
+
+      // SAVE THE SELECTION
+      selectedTextRef.current = text;
+      selectedRangeRef.current = range.cloneRange();
+      highlightAnchorRef.current = anchor;
+
+      console.log("✅ MOBILE SELECTION:", text);
+      console.log("✅ Range saved:", selectedRangeRef.current);
+      console.log("✅ Highlight anchor:", anchor);
+    }, 50);
+  };
+
+  const renderHighlightOnRange = (range, highlightId, color) => {
+    if (!range || !pdfPageRef.current) return;
+
+    const textLayer = pdfPageRef.current.querySelector(".textLayer");
+
     if (!textLayer) {
       console.log("Text layer not found");
       return;
     }
 
-    // Get all text before the selection
-    const beforeRange = document.createRange();
-    beforeRange.setStart(textLayer, 0);
-    beforeRange.setEnd(range.startContainer, range.startOffset);
+    const affectedNodes = [];
 
-    // Get all text after the selection
-    const afterRange = document.createRange();
-    afterRange.setStart(range.endContainer, range.endOffset);
-    afterRange.setEnd(textLayer, textLayer.childNodes.length);
+    const walker = document.createTreeWalker(
+      textLayer,
+      NodeFilter.SHOW_TEXT
+    );
 
-    const beforeText = beforeRange.toString();
-    const afterText = afterRange.toString();
+    let currentNode;
 
-    // Keep only a small amount of surrounding text
-    const beforeContext = beforeText.slice(-100);
-    const afterContext = afterText.slice(0, 100);
+    while ((currentNode = walker.nextNode())) {
+      if (range.intersectsNode(currentNode)) {
+        affectedNodes.push(currentNode);
+      }
+    }
 
-    const anchor = {
-      pageNumber: pageNumber,
-      text: text,
-      beforeContext: beforeContext,
-      afterContext: afterContext,
-    };
+    affectedNodes.forEach((textNode) => {
+      let start = 0;
+      let end = textNode.length;
 
-    selectedTextRef.current = text;
-    selectedRangeRef.current = range.cloneRange();
-    highlightAnchorRef.current = anchor;
+      const startContainer = range.startContainer;
+      const endContainer = range.endContainer;
 
-    console.log("Highlight anchor:", anchor);
+      if (textNode === startContainer) {
+        start = range.startOffset;
+      }
+
+      if (textNode === endContainer) {
+        end = range.endOffset;
+      }
+
+      if (start >= end) {
+        return;
+      }
+
+      let selectedNode = textNode;
+
+      // Split before selected text
+      if (start > 0) {
+        selectedNode = textNode.splitText(start);
+      }
+
+      // Split after selected text
+      if (end - start < selectedNode.length) {
+        selectedNode.splitText(end - start);
+      }
+
+      // IMPORTANT:
+      // Use <mark>, NOT <span>.
+      // PDF.js applies positioning CSS to .textLayer span.
+      const highlight = document.createElement("mark");
+
+      highlight.dataset.highlightId = highlightId;
+
+      highlight.style.backgroundColor = color;
+      highlight.style.color = "#000";
+      highlight.style.borderRadius = "3px";
+      highlight.style.padding = "1px 0";
+      highlight.style.display = "inline";
+
+      // Prevent PDF.js positioning rules from affecting it
+      highlight.style.position = "static";
+      highlight.style.transform = "none";
+
+      highlight.style.boxDecorationBreak = "clone";
+      highlight.style.webkitBoxDecorationBreak = "clone";
+
+      selectedNode.parentNode.insertBefore(
+        highlight,
+        selectedNode
+      );
+
+      highlight.appendChild(selectedNode);
+    });
   };
 
   const applyHighlight = async (color) => {
@@ -221,7 +360,7 @@ export const Book = () => {
     };
 
     try {
-      const response = await fetch(`http://localhost:5000/api/books/${selectedBook._id}/highlights`, {
+      const response = await fetch(`/api/books/${selectedBook._id}/highlights`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -235,20 +374,42 @@ export const Book = () => {
 
       const savedHighlight = data.highlight; // now includes rects
 
+      // Immediately show the highlight in the PDF
+      renderHighlightOnRange(
+        range,
+        savedHighlight._id,
+        savedHighlight.color
+      );
+
       setHighlights((prev) => {
         const updated = [...prev, savedHighlight];
         highlightsRef.current = updated;
         return updated;
       });
 
-      setSelectedBook((prev) =>
-        prev ? { ...prev, highlights: [...(prev.highlights || []), savedHighlight] } : prev
-      );
+      setSelectedBook((prev) => {
+        if (!prev) return prev;
+
+        return {
+          ...prev,
+          highlights: [
+            ...(prev.highlights || []),
+            savedHighlight,
+          ],
+        };
+      });
+
 
       setBooks((prevBooks) =>
         prevBooks.map((book) =>
           book._id === selectedBook._id
-            ? { ...book, highlights: [...(book.highlights || []), savedHighlight] }
+            ? {
+              ...book,
+              highlights: [
+                ...(book.highlights || []),
+                savedHighlight,
+              ],
+            }
             : book
         )
       );
@@ -265,11 +426,11 @@ export const Book = () => {
 
   const restoreHighlights = useCallback(() => {
     if (!pdfPageRef.current) return;
-    const restoreKey = `${selectedBook._id}-${pageNumber}`;
+    // const restoreKey = `${selectedBook._id}-${pageNumber}`;
 
-    if (restoredPageRef.current === restoreKey) {
-      return;
-    }
+    // if (restoredPageRef.current === restoreKey) {
+    //   return;
+    // }
 
     const textLayer = pdfPageRef.current.querySelector(".textLayer");
 
@@ -283,6 +444,16 @@ export const Book = () => {
     if (pageHighlights.length === 0) return;
 
     pageHighlights.forEach((savedHighlight) => {
+
+      const existingHighlight =
+        textLayer.querySelector(
+          `[data-highlight-id="${savedHighlight._id}"]`
+        );
+
+      if (existingHighlight) {
+        return;
+      }
+
       const targetText = savedHighlight.text;
 
       const textNodes = [];
@@ -357,52 +528,155 @@ export const Book = () => {
         }
       });
 
-      const normalizedTarget = targetText.replace(/\s+/g, " ").trim();
+      const normalizedTarget = targetText
+        .replace(/\s+/g, " ")
+        .trim();
+
+      const normalizedBefore = (
+        savedHighlight.anchor?.beforeContext || ""
+      )
+        .replace(/\s+/g, " ")
+        .trim();
+
+      const normalizedAfter = (
+        savedHighlight.anchor?.afterContext || ""
+      )
+        .replace(/\s+/g, " ")
+        .trim();
 
       normalizedText = normalizedText.trim();
 
-      let startIndex = normalizedText.indexOf(normalizedTarget);
+      let startIndex = -1;
       let endIndex = -1;
-      console.log("TARGET LENGTH:", normalizedTarget.length);
 
-      console.log("TARGET:", JSON.stringify(normalizedTarget));
+      // --------------------------------------------------
+      // Find the correct occurrence using surrounding context
+      // --------------------------------------------------
 
-      console.log("TARGET INDEX:", startIndex);
+      const candidates = [];
 
-      const targetFirstPart = normalizedTarget.slice(0, 30);
+      let searchFrom = 0;
 
-      console.log("FIRST PART INDEX:", normalizedText.indexOf(targetFirstPart));
+      while (true) {
+        const candidateIndex = normalizedText.indexOf(
+          normalizedTarget,
+          searchFrom
+        );
 
-      if (startIndex === -1) {
-        console.log("Exact match failed, using start + end markers...");
-
-        const startMarker = normalizedTarget.slice(0, 30);
-
-        const endMarker = normalizedTarget.slice(-30);
-
-        console.log("START MARKER:", JSON.stringify(startMarker));
-
-        console.log("END MARKER:", JSON.stringify(endMarker));
-
-        const markerStart = normalizedText.indexOf(startMarker);
-
-        const markerEnd = normalizedText.indexOf(endMarker, markerStart + startMarker.length);
-
-        console.log("START MARKER INDEX:", markerStart);
-
-        console.log("END MARKER INDEX:", markerEnd);
-
-        if (markerStart === -1 || markerEnd === -1) {
-          console.log("Could not restore:", targetText);
-
-          return;
+        if (candidateIndex === -1) {
+          break;
         }
 
-        startIndex = markerStart;
+        const candidateBefore = normalizedText
+          .slice(
+            Math.max(0, candidateIndex - normalizedBefore.length),
+            candidateIndex
+          )
+          .trim();
 
-        endIndex = markerEnd + endMarker.length - 1;
+        const candidateAfter = normalizedText
+          .slice(
+            candidateIndex + normalizedTarget.length,
+            candidateIndex +
+            normalizedTarget.length +
+            normalizedAfter.length
+          )
+          .trim();
+
+        // Calculate how much of the saved context matches
+        let beforeScore = 0;
+        let afterScore = 0;
+
+        if (normalizedBefore) {
+          const maxBefore = Math.min(
+            normalizedBefore.length,
+            candidateBefore.length
+          );
+
+          for (let i = 1; i <= maxBefore; i++) {
+            if (
+              normalizedBefore[
+              normalizedBefore.length - i
+              ] === candidateBefore[
+              candidateBefore.length - i
+              ]
+            ) {
+              beforeScore++;
+            } else {
+              break;
+            }
+          }
+        }
+
+        if (normalizedAfter) {
+          const maxAfter = Math.min(
+            normalizedAfter.length,
+            candidateAfter.length
+          );
+
+          for (let i = 0; i < maxAfter; i++) {
+            if (
+              normalizedAfter[i] === candidateAfter[i]
+            ) {
+              afterScore++;
+            } else {
+              break;
+            }
+          }
+        }
+
+        const totalScore = beforeScore + afterScore;
+
+        candidates.push({
+          index: candidateIndex,
+          score: totalScore,
+          beforeScore,
+          afterScore,
+        });
+
+        searchFrom =
+          candidateIndex +
+          Math.max(1, normalizedTarget.length);
+      }
+
+      // --------------------------------------------------
+      // Pick the occurrence with the strongest context match
+      // --------------------------------------------------
+
+      if (candidates.length > 0) {
+        candidates.sort((a, b) => b.score - a.score);
+
+        const bestCandidate = candidates[0];
+
+        startIndex = bestCandidate.index;
+        endIndex =
+          startIndex + normalizedTarget.length - 1;
+
+        console.log(
+          "🎯 OCCURRENCE MATCH:",
+          bestCandidate
+        );
+
+        console.log(
+          "📌 TOTAL OCCURRENCES:",
+          candidates.length
+        );
       } else {
-        endIndex = startIndex + normalizedTarget.length - 1;
+        console.log(
+          "❌ Could not find highlighted text:",
+          targetText
+        );
+        return;
+      }
+
+
+
+      if (startIndex === -1) {
+        console.log(
+          "❌ Could not restore:",
+          targetText
+        );
+        return;
       }
 
       const startInfo = charMap[startIndex];
@@ -474,22 +748,20 @@ export const Book = () => {
           selectedNode.splitText(end - start);
         }
 
-        const highlight = document.createElement("span");
+        const highlight = document.createElement("mark");
 
         highlight.dataset.highlightId = savedHighlight._id;
 
         highlight.style.backgroundColor = savedHighlight.color;
-
         highlight.style.color = "#000";
-
         highlight.style.borderRadius = "3px";
-
         highlight.style.padding = "1px 0";
-
         highlight.style.display = "inline";
 
-        highlight.style.boxDecorationBreak = "clone";
+        highlight.style.position = "static";
+        highlight.style.transform = "none";
 
+        highlight.style.boxDecorationBreak = "clone";
         highlight.style.webkitBoxDecorationBreak = "clone";
 
         selectedNode.parentNode.insertBefore(highlight, selectedNode);
@@ -499,28 +771,67 @@ export const Book = () => {
 
       console.log("Restored:", targetText);
     });
-    restoredPageRef.current = restoreKey;
-  }, [pageNumber]);
+    // restoredPageRef.current = restoreKey;
+  }, [pageNumber, selectedBook]);
 
   const speakSelectedText = () => {
-    const text = selectedTextRef.current;
+    const text = selectedTextRef.current?.trim();
 
     if (!text) {
-      console.log("Please select some text first!");
+      console.log("❌ No selected text");
       return;
     }
 
-    window.speechSynthesis.cancel();
+    if (!window.speechSynthesis) {
+      console.log("❌ Speech synthesis not supported");
+      return;
+    }
 
-    const utterance = new SpeechSynthesisUtterance(text);
+    const synth = window.speechSynthesis;
 
-    const hasHindi = /[\u0900-\u097F]/.test(text);
+    console.log("🔊 Speak requested:", text);
 
-    utterance.lang = hasHindi ? "hi-IN" : "en-IN";
-    utterance.rate = 0.9;
-    utterance.pitch = 1;
+    synth.cancel();
 
-    window.speechSynthesis.speak(utterance);
+    const speak = () => {
+      const utterance = new SpeechSynthesisUtterance(text);
+
+      utterance.lang = /[\u0900-\u097F]/.test(text)
+        ? "hi-IN"
+        : "en-IN";
+
+      utterance.rate = 0.9;
+      utterance.pitch = 1;
+      utterance.volume = 1;
+
+      utterance.onstart = () => {
+        console.log("✅ Speech started");
+      };
+
+      utterance.onend = () => {
+        console.log("✅ Speech ended");
+      };
+
+      utterance.onerror = (event) => {
+        console.log("❌ Speech error:", event.error);
+      };
+
+      synth.resume();
+      synth.speak(utterance);
+    };
+
+    // Mobile browsers sometimes need the voices
+    // to be loaded before speaking.
+    const voices = synth.getVoices();
+
+    if (voices.length > 0) {
+      speak();
+    } else {
+      synth.onvoiceschanged = () => {
+        synth.onvoiceschanged = null;
+        speak();
+      };
+    }
   };
 
   const getMeaning = async () => {
@@ -534,10 +845,10 @@ export const Book = () => {
     setSelectedMeaningText(text);
     setShowMeaning(true);
     setMeaningLoading(true);
-    setMeanings("");
+    setMeanings([]);
 
     try {
-      const response = await fetch("http://localhost:5000/api/books/meaning", {
+      const response = await fetch("/api/books/meaning", {
         method: "POST",
 
         headers: {
@@ -556,7 +867,7 @@ export const Book = () => {
         throw new Error(data.message || "Failed to get meaning");
       }
 
-      setMeanings(data.meanings);
+      setMeanings(Array.isArray(data.meanings) ? data.meanings : []);
     } catch (error) {
       console.log("Meaning error:", error);
 
@@ -598,7 +909,7 @@ export const Book = () => {
     };
 
     try {
-      const response = await fetch(`http://localhost:5000/api/books/${selectedBook._id}/notes`, {
+      const response = await fetch(`/api/books/${selectedBook._id}/notes`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -656,7 +967,7 @@ export const Book = () => {
     const token = localStorage.getItem("token");
 
     try {
-      const response = await fetch(`http://localhost:5000/api/books/${selectedBook._id}/notes/${noteId}`, {
+      const response = await fetch(`/api/books/${selectedBook._id}/notes/${noteId}`, {
         method: "DELETE",
         headers: {
           Authorization: `Bearer ${token}`,
@@ -711,7 +1022,7 @@ export const Book = () => {
     if (!selectedBook) return;
 
     try {
-      const response = await fetch(`http://localhost:5000/api/books/${selectedBook._id}/total-pages`, {
+      const response = await fetch(`/api/books/${selectedBook._id}/total-pages`, {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
@@ -760,7 +1071,7 @@ export const Book = () => {
       console.log("PDF:", file);
       console.log("Cover:", coverBlob);
 
-      const response = await fetch("http://localhost:5000/api/books", {
+      const response = await fetch("/api/books", {
         method: "POST",
         headers: {
           Authorization: `Bearer ${localStorage.getItem("token")}`,
@@ -771,7 +1082,7 @@ export const Book = () => {
       const data = await response.json();
 
       console.log("Backend response:", data);
-      const booksResponse = await fetch("http://localhost:5000/api/books", {
+      const booksResponse = await fetch("/api/books", {
         headers: {
           Authorization: `Bearer ${localStorage.getItem("token")}`,
         },
@@ -788,7 +1099,7 @@ export const Book = () => {
     if (!selectedBook) return;
 
     try {
-      const response = await fetch(`http://localhost:5000/api/books/${selectedBook._id}/page`, {
+      const response = await fetch(`/api/books/${selectedBook._id}/page`, {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
@@ -811,7 +1122,7 @@ export const Book = () => {
   };
 
   const handleFileOpen = (book) => {
-    restoredPageRef.current = null;
+    // restoredPageRef.current = null;
     setSelectedBook(book);
     localStorage.setItem("lastBookId", book._id);
     const page = book.lastPage || 1;
@@ -820,7 +1131,7 @@ export const Book = () => {
   };
 
   const goToHighlightPage = (page) => {
-    restoredPageRef.current = null;
+    // restoredPageRef.current = null;
 
     // Only temporarily change the displayed page
     setPageNumber(page);
@@ -829,7 +1140,7 @@ export const Book = () => {
 
   const goToPage = () => {
     const page = Number(pageInput);
-    restoredPageRef.current = null;
+    // restoredPageRef.current = null;
 
     if (page >= 1 && page <= numPages) {
       setPageNumber(page);
@@ -840,7 +1151,7 @@ export const Book = () => {
     if (pageNumber === 1) return;
     const prevPage = pageNumber - 1;
 
-    restoredPageRef.current = null;
+    // restoredPageRef.current = null;
 
     setPageNumber(prevPage);
     setPageInput(prevPage.toString());
@@ -852,7 +1163,7 @@ export const Book = () => {
 
     const nextPage = pageNumber + 1;
 
-    restoredPageRef.current = null;
+    // restoredPageRef.current = null;
 
     setPageNumber(nextPage);
     setPageInput(nextPage.toString());
@@ -861,7 +1172,7 @@ export const Book = () => {
 
   const deleteBook = async (id) => {
     try {
-      const response = await fetch(`http://localhost:5000/api/books/${id}`, {
+      const response = await fetch(`/api/books/${id}`, {
         method: "DELETE",
         headers: {
           Authorization: `Bearer ${localStorage.getItem("token")}`,
@@ -918,6 +1229,42 @@ export const Book = () => {
         element.remove();
       }
     });
+  };
+
+  const handleDeleteHighlight = (highlightId) => {
+    const currentBookId = selectedBook?._id;
+
+    // Remove from highlights state
+    setHighlights((prev) => {
+      const updated = prev.filter(
+        (highlight) => highlight._id !== highlightId
+      );
+
+      // VERY IMPORTANT:
+      // Keep the ref synchronized
+      highlightsRef.current = updated;
+
+      return updated;
+    });
+
+    // Remove from books state
+    setBooks((prevBooks) =>
+      prevBooks.map((book) => {
+        if (book._id !== currentBookId) {
+          return book;
+        }
+
+        return {
+          ...book,
+          highlights: (book.highlights || []).filter(
+            (highlight) => highlight._id !== highlightId
+          ),
+        };
+      })
+    );
+
+    // Remove the visual highlight from the PDF
+    removeHighlightFromPdf(highlightId);
   };
 
   const handlePdfClick = () => {
@@ -1108,6 +1455,7 @@ export const Book = () => {
           <div className="md:hidden flex items-center justify-between px-4 py-3 bg-[#202020]">
 
             <button
+              onClick={() => setShowMobileLibrary(true)}
               className="w-10 h-10 rounded-full bg-[#2E2E2E] flex items-center justify-center"
             >
               ☰
@@ -1124,47 +1472,310 @@ export const Book = () => {
 
           </div>
 
+          {showMobileLibrary && (
+            <div className="md:hidden fixed inset-0 z-[100]">
+
+              {/* Background overlay */}
+              <div
+                className="absolute inset-0 bg-black/50"
+                onClick={() => setShowMobileLibrary(false)}
+              />
+
+              {/* Drawer */}
+              <aside className="absolute left-0 top-0 bottom-0 w-[85%] max-w-[340px] bg-[#202020] flex flex-col shadow-2xl">
+
+                {/* Library header */}
+                <div className="flex items-center justify-between p-4 border-b border-[#353535]">
+
+                  <div className="flex items-center gap-2">
+                    <img
+                      src="/reader-logo.png"
+                      alt="My Library"
+                      className="w-8 h-8 object-cover"
+                    />
+
+                    <h1 className="text-lg font-lora font-medium text-white">
+                      {user?.name
+                        ? `${user.name}'s Library`
+                        : "My Library"}
+                    </h1>
+                  </div>
+
+                  <button
+                    onClick={() => setShowMobileLibrary(false)}
+                    className="w-8 h-8 rounded-full bg-[#2D2D2D] text-[#D9B26F] flex items-center justify-center text-lg cursor-pointer"
+                  >
+                    ×
+                  </button>
+
+                </div>
+
+                {/* Search */}
+                <div className="p-4">
+
+                  <div className="relative flex bg-[#2D2D2D] h-11 items-center rounded-[10px]">
+
+                    <FiSearch className="text-[#D9B26F] text-xl w-10" />
+
+                    <input
+                      className="text-base text-[#B4B4B4] bg-transparent flex-1 outline-none font-inter pr-3"
+                      type="search"
+                      placeholder="Search your books..."
+                      value={search}
+                      onChange={(e) => handleChange(e.target.value)}
+                    />
+
+                  </div>
+
+                </div>
+
+                {/* Book list */}
+                <div className="flex-1 overflow-y-auto px-3">
+
+                  <div className="flex flex-col gap-2">
+
+                    {filterBook.map((book) => {
+
+                      const totalPages =
+                        book.totalPages ||
+                        (selectedBook?._id === book._id
+                          ? numPages
+                          : null);
+
+                      const progress = totalPages
+                        ? Math.min(
+                          Math.round(
+                            ((book.lastPage || 1) /
+                              totalPages) *
+                            100
+                          ),
+                          100
+                        )
+                        : 0;
+
+                      return (
+                        <div
+                          key={book._id}
+                          className={`relative rounded-xl p-3 flex gap-3 items-center cursor-pointer transition ${selectedBook?._id === book._id
+                            ? "bg-[#3A3A3A]"
+                            : "hover:bg-[#2D2D2D]"
+                            }`}
+                          onClick={() => {
+                            handleFileOpen(book);
+                            setShowMobileLibrary(false);
+                          }}
+                        >
+
+                          <img
+                            src={book.coverUrl}
+                            alt={book.title}
+                            className="w-12 h-16 object-cover rounded-md shrink-0"
+                          />
+
+                          <div className="flex-1 min-w-0">
+
+                            <h2 className="text-[#F5E6C8] text-base font-lora leading-5 break-words">
+                              {book.title}
+                            </h2>
+
+                            <div className="mt-2">
+
+                              <div className="w-full h-[3px] bg-[#151515] rounded-full overflow-hidden">
+
+                                <div
+                                  className="h-full bg-[#D9B26F] rounded-full"
+                                  style={{
+                                    width: `${progress}%`,
+                                  }}
+                                />
+
+                              </div>
+
+                              <p className="text-[10px] text-[#D9B26F] font-inter text-right mt-1">
+                                {progress}%
+                              </p>
+
+                            </div>
+
+                          </div>
+
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              deleteBook(book._id);
+                            }}
+                            className="text-gray-500 hover:text-red-400 p-2 cursor-pointer"
+                          >
+                            <RiDeleteBin6Line />
+                          </button>
+
+                        </div>
+                      );
+                    })}
+
+                  </div>
+
+                </div>
+
+                {/* Add book */}
+                <div className="p-4 border-t border-[#353535]">
+
+                  <input className="hidden" type="file" accept="application/pdf" ref={fileInputRef} onChange={handleUpload} />
+
+                  <button
+                    className="w-full flex items-center justify-center gap-2 text-[#202020] rounded-full  bg-[#D9B26F] h-11 hover:bg-[#2E2E2E] cursor-pointer font-inter"
+                    onClick={() => fileInputRef.current.click()}
+                  >
+                    <FiPlus className="text-xl" />
+                    Add New Book
+                  </button>
+
+                </div>
+
+              </aside>
+
+            </div>
+          )}
+
           <div className="md:hidden flex items-center justify-center px-4 py-2 bg-[#151515]">
 
-  <div className="flex items-center justify-between w-full max-w-[320px] bg-[#202020] rounded-full px-3 py-1">
+            <div className="flex items-center justify-between w-full max-w-[320px] bg-[#202020] rounded-full px-3 py-1">
 
-    <button
-      onClick={prevBtn}
-      className="text-[#D9B26F] p-2"
-    >
-      <FiArrowLeft className="text-xl" />
-    </button>
+              <button
+                onClick={prevBtn}
+                className="text-[#D9B26F] p-2"
+              >
+                <FiArrowLeft className="text-xl" />
+              </button>
 
-    <div className="flex items-center gap-1 font-mono text-sm">
+              <div className="flex items-center gap-1 font-mono text-sm">
 
-      <input
-        className="w-8 text-center bg-transparent outline-none text-white"
-        type="number"
-        value={pageInput}
-        onKeyDown={(e) => {
-          if (e.key === "Enter") {
-            goToPage();
-          }
-        }}
-        onChange={(e) => setPageInput(e.target.value)}
-      />
+                <input
+                  className="w-8 text-center bg-transparent outline-none text-white"
+                  type="number"
+                  value={pageInput}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      goToPage();
+                    }
+                  }}
+                  onChange={(e) => setPageInput(e.target.value)}
+                />
 
-      <span className="text-gray-400">
-        / {numPages}
-      </span>
+                <span className="text-gray-400">
+                  / {numPages}
+                </span>
 
-    </div>
+              </div>
 
-    <button
-      onClick={nextBtn}
-      className="text-[#D9B26F] p-2"
-    >
-      <FiArrowRight className="text-xl" />
-    </button>
+              <button
+                onClick={nextBtn}
+                className="text-[#D9B26F] p-2"
+              >
+                <FiArrowRight className="text-xl" />
+              </button>
 
-  </div>
+            </div>
 
-</div>
+          </div>
+
+          {/* Mobile Highlights & Notes */}
+          <div className="md:hidden px-3 py-2 bg-[#151515] relative">
+
+            {/* Button */}
+            <button
+              onClick={() => setShowMobileNotes((prev) => !prev)}
+              className="w-full h-10 px-4 rounded-xl bg-[#202020] border border-[#333] flex items-center justify-between text-[#F5E6C8] font-inter text-sm"
+            >
+              <span>Highlights & Notes</span>
+
+              <FiChevronDown
+                className={`text-[#D9B26F] transition-transform duration-200 ${showMobileNotes ? "rotate-180" : ""
+                  }`}
+              />
+            </button>
+
+            {/* Popup */}
+            {showMobileNotes && (
+              <div className="absolute left-3 right-3 top-full mt-2 z-[80]">
+
+                <div className="bg-[#202020] rounded-2xl border border-[#353535] shadow-[0_10px_35px_rgba(0,0,0,0.55)] overflow-hidden">
+
+                  {/* Popup Header */}
+                  <div className="flex items-center justify-between px-4 py-3 border-b border-[#353535]">
+
+                    <h2 className="text-[#F5E6C8] font-lora text-base font-semibold">
+                      Highlights & Notes
+                    </h2>
+
+                    <button
+                      onClick={() => setShowMobileNotes(false)}
+                      className="w-7 h-7 rounded-full bg-[#2D2D2D] flex items-center justify-center text-[#D9B26F] hover:bg-[#3A3A3A]"
+                    >
+                      ×
+                    </button>
+
+                  </div>
+
+                  {/* Tabs */}
+                  <div className="flex gap-2 px-3 pt-3">
+
+                    <button
+                      onClick={() => setActiveTab("highlight")}
+                      className={`flex-1 py-2 rounded-lg text-xs font-inter transition ${activeTab === "highlight"
+                        ? "bg-[#D9B26F] text-[#202020]"
+                        : "bg-[#2D2D2D] text-[#B4B4B4]"
+                        }`}
+                    >
+                      Highlights
+                    </button>
+
+                    <button
+                      onClick={() => setActiveTab("notes")}
+                      className={`flex-1 py-2 rounded-lg text-xs font-inter transition ${activeTab === "notes"
+                        ? "bg-[#D9B26F] text-[#202020]"
+                        : "bg-[#2D2D2D] text-[#B4B4B4]"
+                        }`}
+                    >
+                      Notes
+                    </button>
+
+                  </div>
+
+                  {/* Content */}
+                  <div className="max-h-[260px] overflow-y-auto p-3 custom-scrollbar">
+
+                    {activeTab === "highlight" ? (
+
+                      <Highlight
+                        highlights={highlights}
+                        bookId={selectedBook?._id}
+                        onDeleteHighlight={handleDeleteHighlight}
+                        onRemoveHighlightFromPdf={removeHighlightFromPdf}
+                        onGoToPage={goToHighlightPage}
+                        pageNumber={pageNumber}
+                      />
+
+                    ) : (
+
+                      <Notes
+                        notes={notes}
+                        onGoToPage={goToHighlightPage}
+                        onDeleteNote={deleteNote}
+                      />
+
+                    )}
+
+                  </div>
+
+                </div>
+
+              </div>
+            )}
+
+          </div>
+
+
 
           <div className="relative flex-1 overflow-y-auto flex justify-center mb-2" onMouseDown={handlePdfClick}>
             {selectedBook && (
@@ -1178,6 +1789,8 @@ export const Book = () => {
               />
             )}
           </div>
+
+
           {!showSelectionTools && (
             <button
               onClick={() => setShowSelectionTools(true)}
@@ -1189,36 +1802,93 @@ export const Book = () => {
           )}
           {showSelectionTools && (
             <div
-              className=" flex fixed bg-[#2D2D2D] font-inter p-1 px-5 rounded-[20px] shadow-lg z-10 gap-9 items-center justify-center"
-              style={{ bottom: 20, left: "50%", transform: "translateX(-50%)" }}
+              className="
+      fixed z-50
+      bottom-0 left-0 right-0
+      md:bottom-5 md:left-1/2 md:right-auto md:-translate-x-1/2
+
+      bg-[#202020]
+      font-inter
+
+      rounded-t-[20px]
+      md:rounded-[20px]
+
+      shadow-[0_-8px_25px_rgba(0,0,0,0.35)]
+
+      px-2 pt-3 pb-2
+      md:px-5 md:py-1
+
+      grid grid-cols-4
+      md:flex md:items-center md:justify-center md:gap-9
+    "
             >
+
+              {/* Collapse button */}
               <button
                 onClick={() => setShowSelectionTools(false)}
-                className="absolute -top-2 -right-2 w-5 h-5 rounded-full bg-[#3A3A3A] text-[#D9B26F] flex items-center justify-center hover:bg-[#444] transition cursor-pointer"
+                className="
+        absolute
+        -top-3 right-3
+        w-6 h-6
+        rounded-full
+        bg-[#3A3A3A]
+        text-[#D9B26F]
+        flex items-center justify-center
+        shadow-md
+        cursor-pointer
+        hover:bg-[#444]
+      "
               >
                 <FiChevronDown className="text-sm" />
               </button>
 
-              <div className="relative">
-                <button className="cursor-pointer" onClick={getMeaning} onMouseDown={(e) => e.preventDefault()}>
-                  <LuNotebookText className="hover:bg-[#202020] rounded-[50%] text-[#D9B26F] w-12 h-full p-3 cursor-pointer" />
-                  <h2 className="text-s">Meaning</h2>
+
+              {/* Meaning */}
+              <div className="relative min-w-0 flex justify-center">
+                <button
+                  className="
+          w-full
+          flex flex-col items-center justify-center
+          gap-1
+          cursor-pointer
+          py-1
+          md:w-auto
+        "
+                  onClick={getMeaning}
+                  onMouseDown={(e) => e.preventDefault()}
+                >
+                  <LuNotebookText
+                    className="
+            text-[#D9B26F]
+            text-[22px]
+            md:text-xl
+          "
+                  />
+
+                  <h2 className="text-[12px] md:text-sm text-[#F5E6C8]">
+                    Meaning
+                  </h2>
                 </button>
 
+                {/* Meaning popup */}
                 {showMeaning && (
-                  <div className="absolute bottom-full mb-3 left-1/2 -translate-x-1/2 w-80 max-h-72 bg-[#242424] border border-[#3A3A3A] rounded-xl shadow-[0_8px_30px_rgba(0,0,0,0.45)] z-50 overflow-hidden">
+                  <div className=" fixed left-3 right-3 bottom-[90px] w-auto max-h-[65vh] md:absolute md:left-1/2 md:right-auto md:bottom-full md:mb-3 md:-translate-x-1/2 md:w-80 md:max-h-72 bg-[#242424] border border-[#3A3A3A] rounded-xl shadow-[0_8px_30px_rgba(0,0,0,0.45)] z-[100] overflow-hidden ">
+
                     <div className="flex items-center justify-between px-4 py-3 border-b border-[#353535]">
-                      <h3 className="text-[#D9B26F] text-base font-semibold">Meaning</h3>
+                      <h3 className="text-[#D9B26F] text-base font-semibold">
+                        Meaning
+                      </h3>
+
                       <button
                         onClick={() => setShowMeaning(false)}
-                        className="text-gray-500 hover:text-gray-200 text-lg transition-colors cursor-pointer"
+                        className="text-gray-500 hover:text-gray-200 text-lg cursor-pointer"
                       >
-                        {" "}
-                        ×{" "}
+                        ×
                       </button>
                     </div>
 
                     <div className="px-4 py-3 overflow-y-auto max-h-60 custom-scrollbar">
+
                       <div className="mb-4">
                         <span className="inline-block px-2.5 py-1 rounded-md bg-[#303030] border border-[#444] text-[#E6E6E6] text-sm font-medium">
                           {selectedMeaningText}
@@ -1227,118 +1897,197 @@ export const Book = () => {
 
                       {meaningLoading ? (
                         <div className="flex items-center gap-2 text-gray-400 text-sm py-3">
-                          <span className="animate-pulse">Finding meaning...</span>
+                          <span className="animate-pulse">
+                            Finding meaning...
+                          </span>
                         </div>
                       ) : meanings.length === 0 ? (
-                        <p className="text-gray-400 text-sm">Meaning not found.</p>
+                        <p className="text-gray-400 text-sm">
+                          Meaning not found.
+                        </p>
                       ) : (
                         <div className="space-y-4">
                           {meanings.map((item, index) => (
-                            <div key={index} className="border-l-2 border-[#D9B26F] pl-3">
-                              <p className="text-[#D9B26F] text-xs font-medium italic mb-1">{item.partOfSpeech}</p>
-                              <p className="text-gray-200 text-sm leading-relaxed">{item.definition}</p>
+                            <div
+                              key={index}
+                              className="border-l-2 border-[#D9B26F] pl-3"
+                            >
+                              <p className="text-[#D9B26F] text-xs font-medium italic mb-1">
+                                {item.partOfSpeech}
+                              </p>
+
+                              <p className="text-gray-200 text-sm leading-relaxed">
+                                {item.definition}
+                              </p>
                             </div>
                           ))}
                         </div>
                       )}
+
                     </div>
                   </div>
                 )}
               </div>
-              <div className="relative">
+
+
+              {/* Highlight */}
+              <div className="relative min-w-0 flex justify-center">
                 <button
-                  className="cursor-pointer"
+                  className="
+          w-full
+          flex flex-col items-center justify-center
+          gap-1
+          cursor-pointer
+          py-1
+          md:w-auto
+        "
                   onClick={(e) => {
                     e.preventDefault();
+
                     if (!selectedRangeRef.current) {
                       console.log("please select some text!");
                       return;
                     }
+
                     setShowColors(true);
-                    console.log("Highlight button clicked");
                   }}
                 >
-                  <PiHighlighterCircleBold className="hover:bg-[#202020] rounded-[50%] text-[#D9B26F] w-12 h-full p-3 cursor-pointer" />
-                  <h2 className="text-s">Highlight</h2>
+                  <PiHighlighterCircleBold
+                    className="text-[#D9B26F] text-[22px] md:text-xl"
+                  />
+
+                  <h2 className="text-[12px] md:text-sm text-[#F5E6C8]">
+                    Highlight
+                  </h2>
                 </button>
 
+                {/* Highlight colors */}
                 {showColors && (
-                  <div className="absolute bottom-full mb-3 left-1/2 -translate-x-1/2 bg-[#202020] p-2 rounded-xl flex gap-2 shadow-lg">
+                  <div className="absolute bottom-full mb-3 left-1/2 -translate-x-1/2 bg-[#202020] p-2 rounded-xl flex gap-2 shadow-lg z-50">
                     <button
                       className="w-7 h-7 rounded-full bg-yellow-300 cursor-pointer"
                       onClick={() => applyHighlight("#FFF176")}
-                    ></button>
+                    />
+
                     <button
                       className="w-7 h-7 rounded-full bg-green-300 cursor-pointer"
                       onClick={() => applyHighlight("#A5D6A7")}
-                    ></button>
+                    />
+
                     <button
                       className="w-7 h-7 rounded-full bg-blue-300 cursor-pointer"
                       onClick={() => applyHighlight("#90CAF9")}
-                    ></button>
+                    />
+
                     <button
                       className="w-7 h-7 rounded-full bg-pink-300 cursor-pointer"
                       onClick={() => applyHighlight("#F48FB1")}
-                    ></button>
+                    />
                   </div>
                 )}
               </div>
-              <button
-                className="cursor-pointer"
-                onClick={() => {
-                  if (!selectedRangeRef.current) {
-                    console.log("Please select some text first!");
-                    return;
-                  }
-                  setShowNoteBox(true);
-                }}
-                onMouseDown={(e) => e.preventDefault()}
-              >
-                <PiNotePencilBold className="hover:bg-[#202020] rounded-[50%] text-[#D9B26F] w-12 h-full p-3 cursor-pointer" />
-                <h2 className="text-s">Notes</h2>
-              </button>
-              {showNoteBox && (
-                <div className=" absolute bottom-full mb-3 left-1/2 -translate-x-1/2 w-80 bg-[#242424] border border-[#3A3A3A] rounded-xl shadow-lg z-50 p-4 ">
-                  <div className="flex items-center justify-between mb-3">
-                    <h3 className="text-[#D9B26F] font-semibold">Add Note</h3>
-                    <button
-                      onClick={() => setShowNoteBox(false)}
-                      className="text-gray-500 hover:text-white text-lg cursor-pointer"
-                    >
-                      {" "}
-                      ×{" "}
-                    </button>
-                  </div>
 
-                  <div className="mb-3">
-                    <p className="text-xs text-gray-400 mb-1">Selected text</p>
-                    <p className=" text-sm text-gray-200 bg-[#303030] border border-[#444] rounded-lg p-2 ">
-                      {" "}
-                      {selectedTextRef.current}{" "}
-                    </p>
-                  </div>
 
-                  <textarea
-                    value={noteText}
-                    onChange={(e) => setNoteText(e.target.value)}
-                    placeholder="Write your note..."
-                    className=" w-full h-24 resize-none bg-[#303030] border border-[#444] rounded-lg p-2 text-sm text-white outline-none focus:border-[#D9B26F] "
+              {/* Notes */}
+              <div className="relative min-w-0 flex justify-center">
+                <button
+                  className="
+          w-full
+          flex flex-col items-center justify-center
+          gap-1
+          cursor-pointer
+          py-1
+          md:w-auto
+        "
+                  onClick={() => {
+                    if (!selectedRangeRef.current) {
+                      console.log("Please select some text first!");
+                      return;
+                    }
+
+                    setShowNoteBox(true);
+                  }}
+                  onMouseDown={(e) => e.preventDefault()}
+                >
+                  <PiNotePencilBold
+                    className="text-[#D9B26F] text-[22px] md:text-xl"
                   />
 
-                  <button
-                    onClick={saveNote}
-                    className=" w-full mt-3 py-2 rounded-lg bg-[#D9B26F] text-[#202020] font-medium cursor-pointer hover:opacity-90 "
-                  >
-                    {" "}
-                    Save Note{" "}
-                  </button>
-                </div>
-              )}
+                  <h2 className="text-[12px] md:text-sm text-[#F5E6C8]">
+                    Notes
+                  </h2>
+                </button>
 
-              <button className="cursor-pointer" onClick={speakSelectedText}>
-                <MdOutlineRecordVoiceOver className="hover:bg-[#202020] rounded-[50%] text-[#D9B26F] w-12 h-full p-3 cursor-pointer" />
-                <h2 className="text-s">Speak</h2>
-              </button>
+                {/* Note popup */}
+                {showNoteBox && (
+                  <div className=" fixed left-3 right-3 bottom-[90px] w-auto max-h-[65vh] md:absolute md:left-1/2 md:right-auto md:bottom-full md:mb-3 md:-translate-x-1/2 md:w-80 bg-[#242424] border border-[#3A3A3A] rounded-xl shadow-lg z-[100] p-4 ">
+
+                    <div className="flex items-center justify-between mb-3">
+                      <h3 className="text-[#D9B26F] font-semibold">
+                        Add Note
+                      </h3>
+
+                      <button
+                        onClick={() => setShowNoteBox(false)}
+                        className="text-gray-500 hover:text-white text-lg cursor-pointer"
+                      >
+                        ×
+                      </button>
+                    </div>
+
+                    <div className="mb-3">
+                      <p className="text-xs text-gray-400 mb-1">
+                        Selected text
+                      </p>
+
+                      <p className="text-sm text-gray-200 bg-[#303030] border border-[#444] rounded-lg p-2">
+                        {selectedTextRef.current}
+                      </p>
+                    </div>
+
+                    <textarea
+                      value={noteText}
+                      onChange={(e) => setNoteText(e.target.value)}
+                      placeholder="Write your note..."
+                      className="w-full h-24 resize-none bg-[#303030] border border-[#444] rounded-lg p-2 text-sm text-white outline-none focus:border-[#D9B26F]"
+                    />
+
+                    <button
+                      onClick={saveNote}
+                      className="w-full mt-3 py-2 rounded-lg bg-[#D9B26F] text-[#202020] font-medium cursor-pointer hover:opacity-90"
+                    >
+                      Save Note
+                    </button>
+
+                  </div>
+                )}
+              </div>
+
+
+              {/* Speak */}
+              <div className="relative min-w-0 flex justify-center">
+                <button
+                  type="button"
+                  className="
+          w-full
+          flex flex-col items-center justify-center
+          gap-1
+          cursor-pointer
+          py-1
+          md:w-auto
+        "
+                  onClick={speakSelectedText}
+                >
+                  <MdOutlineRecordVoiceOver
+                    className="text-[#D9B26F] text-[22px] md:text-xl"
+                  />
+
+                  <h2 className="text-[12px] md:text-sm text-[#F5E6C8]">
+                    Speak
+                  </h2>
+                </button>
+              </div>
+
             </div>
           )}
         </main>
@@ -1369,29 +2118,7 @@ export const Book = () => {
               <Highlight
                 highlights={highlights}
                 bookId={selectedBook?._id}
-                onDeleteHighlight={(highlightId) => {
-                  const currentBookId = selectedBook?._id;
-                  setHighlights((prev) => prev.filter((highlight) => highlight._id !== highlightId));
-                  setSelectedBook((prev) => {
-                    if (!prev) return prev;
-                    return {
-                      ...prev,
-                      highlights: (prev.highlights || []).filter((highlight) => highlight._id !== highlightId),
-                    };
-                  });
-
-                  setBooks((prevBooks) =>
-                    prevBooks.map((book) => {
-                      if (book._id !== currentBookId) {
-                        return book;
-                      }
-                      return {
-                        ...book,
-                        highlights: (book.highlights || []).filter((highlight) => highlight._id !== highlightId),
-                      };
-                    }),
-                  );
-                }}
+                onDeleteHighlight={handleDeleteHighlight}
                 onRemoveHighlightFromPdf={removeHighlightFromPdf}
                 onGoToPage={goToHighlightPage}
                 pageNumber={pageNumber}
