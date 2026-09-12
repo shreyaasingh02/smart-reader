@@ -1,5 +1,6 @@
 import { RiDeleteBin6Line } from "react-icons/ri";
 
+const API_URL = import.meta.env.VITE_API_URL;
 
 export const Highlight = ({ highlights, bookId, onDeleteHighlight, onRemoveHighlightFromPdf, onGoToPage }) => {
 
@@ -16,7 +17,7 @@ export const Highlight = ({ highlights, bookId, onDeleteHighlight, onRemoveHighl
   const deleteHighlight = async(highlightId) => {
     const token = localStorage.getItem("token");
     try {
-      const response = await fetch(`/api/books/${bookId}/highlights/${highlightId}`, {
+      const response = await fetch(`${API_URL}/api/books/${bookId}/highlights/${highlightId}`, {
         method: "DELETE",
         headers: {Authorization: `Bearer ${token}`}
       })

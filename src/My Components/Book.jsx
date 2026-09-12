@@ -17,7 +17,7 @@ import { useSearchParams } from "react-router-dom";
 import { FiChevronUp, FiChevronDown } from "react-icons/fi";
 
 pdfjs.GlobalWorkerOptions.workerSrc = new URL("pdfjs-dist/build/pdf.worker.min.mjs", import.meta.url).toString();
-
+const API_URL = import.meta.env.VITE_API_URL;
 // taking the first page and converting it into cover page
 const generateCover = async (file) => {
   const arrayBuffer = await file.arrayBuffer();
@@ -79,7 +79,7 @@ export const Book = () => {
   useEffect(() => {
     const fetchBooks = async () => {
       try {
-        const response = await fetch("/api/books", {
+        const response = await fetch(`${API_URL}/api/books`, {
           headers: {
             Authorization: `Bearer ${localStorage.getItem("token")}`,
           },
@@ -360,7 +360,7 @@ export const Book = () => {
     };
 
     try {
-      const response = await fetch(`/api/books/${selectedBook._id}/highlights`, {
+      const response = await fetch(`${API_URL}/api/books/${selectedBook._id}/highlights`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -848,7 +848,7 @@ export const Book = () => {
     setMeanings([]);
 
     try {
-      const response = await fetch("/api/books/meaning", {
+      const response = await fetch(`${API_URL}/api/books/meaning`, {
         method: "POST",
 
         headers: {
@@ -909,7 +909,7 @@ export const Book = () => {
     };
 
     try {
-      const response = await fetch(`/api/books/${selectedBook._id}/notes`, {
+      const response = await fetch(`${API_URL}/api/books/${selectedBook._id}/notes`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -967,7 +967,7 @@ export const Book = () => {
     const token = localStorage.getItem("token");
 
     try {
-      const response = await fetch(`/api/books/${selectedBook._id}/notes/${noteId}`, {
+      const response = await fetch(`${API_URL}/api/books/${selectedBook._id}/notes/${noteId}`, {
         method: "DELETE",
         headers: {
           Authorization: `Bearer ${token}`,
@@ -1022,7 +1022,7 @@ export const Book = () => {
     if (!selectedBook) return;
 
     try {
-      const response = await fetch(`/api/books/${selectedBook._id}/total-pages`, {
+      const response = await fetch(`${API_URL}/api/books/${selectedBook._id}/total-pages`, {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
@@ -1071,7 +1071,7 @@ export const Book = () => {
       console.log("PDF:", file);
       console.log("Cover:", coverBlob);
 
-      const response = await fetch("/api/books", {
+      const response = await fetch(`${API_URL}/api/books`, {
         method: "POST",
         headers: {
           Authorization: `Bearer ${localStorage.getItem("token")}`,
@@ -1082,7 +1082,7 @@ export const Book = () => {
       const data = await response.json();
 
       console.log("Backend response:", data);
-      const booksResponse = await fetch("/api/books", {
+      const booksResponse = await fetch(`${API_URL}/api/books`, {
         headers: {
           Authorization: `Bearer ${localStorage.getItem("token")}`,
         },
@@ -1099,7 +1099,7 @@ export const Book = () => {
     if (!selectedBook) return;
 
     try {
-      const response = await fetch(`/api/books/${selectedBook._id}/page`, {
+      const response = await fetch(`${API_URL}/api/books/${selectedBook._id}/page`, {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
@@ -1172,7 +1172,7 @@ export const Book = () => {
 
   const deleteBook = async (id) => {
     try {
-      const response = await fetch(`/api/books/${id}`, {
+      const response = await fetch(`${API_URL}/api/books/${id}`, {
         method: "DELETE",
         headers: {
           Authorization: `Bearer ${localStorage.getItem("token")}`,

@@ -1,6 +1,8 @@
 import React, { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 
+const API_URL = import.meta.env.VITE_API_URL;
+
 export const SignUp = () => {
     const [name, setName] = useState("")
     const [email, setEmail] = useState("")
@@ -9,7 +11,7 @@ export const SignUp = () => {
 
     const collectData = async() => {
         console.log("Data collected")
-        let result = await fetch("/api/auth/signup", {
+        let result = await fetch(`${API_URL}/api/auth/signup`, {
             method: "POST",
             body: JSON.stringify({name, email, password}),
             headers : {

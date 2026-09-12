@@ -1,13 +1,15 @@
 import React, { useState } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 
+const API_URL = import.meta.env.VITE_API_URL;
+
 export const Login = () => {
     const [email, setEmail] = useState("")
     const [password, setPassword] = useState("")
     const navigate = useNavigate()
 
     const collectData = async() => {
-      let result = await fetch("/api/auth/login", {
+      let result = await fetch(`${API_URL}/api/auth/login`, {
         method: "POST",
         body: JSON.stringify({email, password}),
         headers: {'Content-Type' : 'application/json'}
