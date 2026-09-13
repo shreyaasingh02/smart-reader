@@ -1465,10 +1465,43 @@ export const Book = () => {
               {selectedBook?.title || "My Library"}
             </h1>
 
-            <FiUser
-              className="bg-[#2E2E2E] rounded-full text-[#D9B26F] w-10 h-10 p-2 cursor-pointer"
-              onClick={() => setProfileMenu(!profileMenu)}
-            />
+            {/* Profile */}
+            <div className="relative">
+
+              <FiUser
+                className="bg-[#2E2E2E] rounded-full text-[#D9B26F] w-10 h-10 p-2 cursor-pointer"
+                onClick={() => setProfileMenu(!profileMenu)}
+                title="Profile"
+              />
+
+              {/* Mobile Profile Menu */}
+              {profileMenu && (
+                <div className="absolute right-0 top-12 w-40 bg-[#2D2D2D] rounded-xl shadow-lg p-2 z-[200] font-inter">
+
+                  <button
+                    className="w-full text-left p-2 rounded-lg hover:bg-[#202020] cursor-pointer"
+                    onClick={() => {
+                      setProfileMenu(false);
+                      navigate("/login");
+                    }}
+                  >
+                    Login
+                  </button>
+
+                  <button
+                    className="w-full text-left p-2 rounded-lg hover:bg-[#202020] cursor-pointer"
+                    onClick={() => {
+                      logout();
+                      setProfileMenu(false);
+                    }}
+                  >
+                    Logout
+                  </button>
+
+                </div>
+              )}
+
+            </div>
 
           </div>
 
