@@ -51,7 +51,7 @@ router.post("/login", async (req, res) => {
         console.log("User verified:", user.email);
         console.log("JWT secret exists:", !!process.env.JWT_SECRET);
         const token = jwt.sign({ userId: user._id }, process.env.JWT_SECRET, { expiresIn: "7d" });
-        console.log("JWT CREATED:", token);
+        console.log("JWT CREATED");
         res.status(200).json({
             message: "Login successful",
             token: token,
