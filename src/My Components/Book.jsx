@@ -79,31 +79,71 @@ export const Book = () => {
   useEffect(() => {
     const fetchBooks = async () => {
       try {
+        const token = localStorage.getItem("token");
+
+        // No token → go to login
+        if (!token) {
+          navigate("/login");
+          return;
+        }
+
         const response = await fetch(`${API_URL}/api/books`, {
           headers: {
-            Authorization: `Bearer ${localStorage.getItem("token")}`,
+            Authorization: `Bearer ${token}`,
           },
         });
 
         const data = await response.json();
 
+        // 🔴 Authentication failed
+        if (response.status === 401) {
+          console.log("❌ Token is invalid or expired");
+
+          localStorage.removeItem("token");
+          localStorage.removeItem("user");
+          localStorage.removeItem("lastBookId");
+
+          navigate("/login");
+          return;
+        }
+
+        // Other backend errors
+        if (!response.ok) {
+          throw new Error(
+            data.message || "Failed to fetch books"
+          );
+        }
+
+        // Safety check
+        if (!Array.isArray(data)) {
+          console.error(
+            "❌ Expected books array but received:",
+            data
+          );
+
+          setBooks([]);
+          return;
+        }
+
         setBooks(data);
 
-        const lastBookId = localStorage.getItem("lastBookId");
+        const lastBookId =
+          localStorage.getItem("lastBookId");
 
-        const lastBook = data.find((book) => book._id === lastBookId);
+        const lastBook = data.find(
+          (book) => book._id === lastBookId
+        );
 
         if (lastBook) {
-          // Open the last book
           setSelectedBook(lastBook);
 
           const page = lastBook.lastPage || 1;
 
           setPageNumber(page);
           setPageInput(String(page));
+
         } else if (data.length > 0) {
-          // If there is no previous book,
-          // open the first book
+
           const firstBook = data[0];
 
           setSelectedBook(firstBook);
@@ -113,15 +153,21 @@ export const Book = () => {
           setPageNumber(page);
           setPageInput(String(page));
 
-          localStorage.setItem("lastBookId", firstBook._id);
+          localStorage.setItem(
+            "lastBookId",
+            firstBook._id
+          );
         }
+
       } catch (error) {
         console.log("Failed to fetch books:", error);
+
+        setBooks([]);
       }
     };
 
     fetchBooks();
-  }, []);
+  }, [navigate]);
 
   useEffect(() => {
     if ("speechSynthesis" in window) {
@@ -1209,9 +1255,12 @@ export const Book = () => {
   };
 
   const logout = () => {
-    localStorage.clear("token");
-    navigate("/login");
-  };
+  localStorage.removeItem("token");
+  localStorage.removeItem("user");
+  localStorage.removeItem("lastBookId");
+
+  navigate("/login");
+};
 
   const removeHighlightFromPdf = (highlightId) => {
     if (!pdfPageRef.current) return;
